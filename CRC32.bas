@@ -16,6 +16,9 @@ Private Const STD_INPUT_HANDLE = -10&
 ' // Then declare this array variable Crc32Table
 Private crc32Table(256) As Long
 
+Private OnBits(0 To 31) As Long
+
+
 Function ReadStdIn(Optional ByVal NumBytes As Long = -1) As String
     Dim StdIn As Long
     Dim Result As Long
@@ -44,20 +47,6 @@ Sub WriteStdOut(ByVal Text As String)
         Err.Raise 1002, , "Incomplete write operation"
     End If
 End Sub
-
-Function Byte4ToLong(ByRef bArray() As Byte, offset As Integer) As Long
-    Dim iReturn As Long
-    Dim i As Integer
-
-    iReturn = 0
-    For i = 0 To 4 - 1
-        WriteStdOut ("bArray[" & offset + i & "]=0x" & Right$("00" & Hex$(bArray(offset + i)), 2) & vbCrLf)
-        iReturn = iReturn + bArray(offset + i) * (256 ^ ((4 - 1) - i))
-    Next i
-
-    Byte4ToLong = iReturn
-
-End Function
 
 Sub InitCrc32(Optional ByVal dwPolynomial As Long = &H4C11DB7)
     crc32Table(0) = &H0
@@ -335,6 +324,56 @@ Function GetCrc32(ByRef bArray() As Byte, offset As Integer, fileSize As Integer
     GetCrc32 = Not (crc32Result)
 End Function
 
+Private Sub MakeOnBits()
+    Dim j As Integer, _
+        v As Long
+
+    For j = 0 To 30
+        v = v + (2 ^ j)
+        OnBits(j) = v
+    Next j
+
+    OnBits(j) = v + &H80000000
+End Sub
+
+Public Function LShiftLong(ByVal Value As Long, _
+    ByVal Shift As Integer) As Long
+
+    If (Value And (2 ^ (31 - Shift))) Then GoTo OverFlow
+
+    LShiftLong = ((Value And OnBits(31 - Shift)) * (2 ^ Shift))
+    Exit Function
+
+OverFlow:
+    LShiftLong = ((Value And OnBits(31 - (Shift + 1))) * _
+       (2 ^ (Shift))) Or &H80000000
+End Function
+
+Function Byte4ToLong(ByRef bArray() As Byte, offset As Integer) As Long
+    Dim lReturn As Long
+    Dim lValHigh As Long
+    Dim lValLow As Long
+    Dim i As Integer
+
+    lValHigh = 0
+    For i = 0 To 2 - 1
+        WriteStdOut ("bArray[" & offset + i & "]=0x" & Right$("00" & Hex$(bArray(offset + i)), 2) & vbCrLf)
+        ' WriteStdOut ("bArray[" & offset + i & "]=" & bArray(offset + i) & vbCrLf)
+        lValHigh = lValHigh + bArray(offset + i) * (256 ^ ((2 - 1) - i))
+    Next i
+
+    offset = offset + 2
+    lValLow = 0
+    For i = 0 To 2 - 1
+        WriteStdOut ("bArray[" & offset + i & "]=0x" & Right$("00" & Hex$(bArray(offset + i)), 2) & vbCrLf)
+        ' WriteStdOut ("bArray[" & offset + i & "]=" & bArray(offset + i) & vbCrLf)
+        lValLow = lValLow + bArray(offset + i) * (256 ^ ((2 - 1) - i))
+    Next i
+    
+    lReturn = LShiftLong(lValHigh, 16) Or lValLow
+    Byte4ToLong = lReturn
+End Function
+
 Sub Main()
     WriteStdOut ("Hello World!" & vbCrLf)
     Dim fileNum As Integer
@@ -344,34 +383,36 @@ Sub Main()
     Dim dataSize As Long
     Dim dataCRC As Long
     Dim getCRC As Long
-        
+
+    ' Init for bit shift and CRC32.
+    MakeOnBits
+    InitCrc32
+
     fileNum = FreeFile
     Open "data.bin" For Binary As fileNum
     ReDim bytes(LOF(fileNum) - 1)
     Get fileNum, , bytes
     fileSize = LOF(fileNum)
     Close fileNum
-    
+
     WriteStdOut ("File size=" & fileSize & vbCrLf)
 
     'For index = 0 To fileSize Step 1
     '    WriteStdOut ("byts[" & index & "]=0x" & Right$("00" & Hex$(bytes(index)), 2) & vbCrLf)
     'Next
-    
+
     dataSize = Byte4ToLong(bytes, 4)
     WriteStdOut ("Data size=" & dataSize & vbCrLf)
-    
+
     If dataSize + 4 + 4 + 4 > fileSize Then
         WriteStdOut ("Data fileSize=" & dataSize & vbCrLf)
         End
     End If
-    
-    dataCRC = Byte4ToLong(bytes, dataSize + 4 + 4)
-    WriteStdOut ("Data CRC=0x" & Right$("00000000" & Hex$(dataCRC), 8) & "," & dataCRC & vbCrLf)
 
-    InitCrc32
+    dataCRC = Byte4ToLong(bytes, dataSize + 4 + 4)
+    WriteStdOut ("Data CRC32=0x" & Right$("00000000" & Hex$(dataCRC), 8) & "," & dataCRC & vbCrLf)
+
     getCRC = GetCrc32(bytes, 0, dataSize + 4 + 4)
-    WriteStdOut ("Get CRC=0x" & Right$("00000000" & Hex$(getCRC), 8) & "," & getCRC & vbCrLf)
-   
+    WriteStdOut ("Get  CRC32=0x" & Right$("00000000" & Hex$(getCRC), 8) & "," & getCRC & vbCrLf)
 End Sub
 
